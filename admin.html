@@ -2141,6 +2141,11 @@ const historico = (p.historico || []).map(h => {
           <div class="pedido-numero">Pedido: ${p.numero}</div>
           <div class="pedido-data">${new Date(p.data).toLocaleString()}</div>
         </div>
+        <div class="pedido-acoes" style="display: flex; justify-content: flex-end; margin-top: var(--space-3);">
+          <button class="btn btn-primary" onclick="imprimirPedido('${p.id}')">
+            <i class="fas fa-print"></i> Imprimir Pedido
+          </button>
+        </div>
         
         <div class="pedido-info">
           <div class="pedido-info-item">
@@ -2153,7 +2158,21 @@ const historico = (p.historico || []).map(h => {
           </div>
           <div class="pedido-info-item">
             <div class="pedido-info-label">Observações:</div>
-            <div class="pedido-info-value">${p.observacoes || "Nenhuma observação"}</div>
+            <div class="pedido-info-value">
+              <span id="obs-${p.id}" class="obs-text">${p.observacoes || "Nenhuma observação"}</span>
+              <textarea id="obsInput-${p.id}" class="form-control" style="display:none; max-width: 100%; margin-top: 6px;">${p.observacoes || ""}</textarea>
+              <div style="margin-top: 8px; display: flex; gap: 8px;">
+                <button class="btn btn-secondary" id="btnObsEditar-${p.id}" onclick="editarObservacaoPedido('${p.id}')">
+                  <i class="fas fa-pen"></i> Editar
+                </button>
+                <button class="btn btn-success" id="btnObsSalvar-${p.id}" style="display:none;" onclick="salvarObservacaoPedido('${p.id}')">
+                  <i class="fas fa-check"></i> Salvar
+                </button>
+                <button class="btn btn-light" id="btnObsCancelar-${p.id}" style="display:none;" onclick="cancelarEdicaoObservacao('${p.id}')">
+                  <i class="fas fa-times"></i> Cancelar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
         
@@ -2245,6 +2264,16 @@ function atualizarStatusIndividual(id, valor) {
     "Confirmar alteração de status",
     `Deseja alterar o status do pedido para "${valor}"?`,
     () => {
+      // Se for cancelamento, exigir justificativa
+      let justificativaCancelamento = "";
+      if ((valor || "").toString().toLowerCase() === "pedido cancelado") {
+        justificativaCancelamento = (window.prompt && window.prompt("Informe a justificativa do cancelamento:")) || "";
+        if (!justificativaCancelamento.trim()) {
+          showNotification && showNotification("Justificativa é obrigatória para cancelamento.", "warning");
+          return;
+        }
+      }
+
       showLoadingIndicator();
       
       const ref = db.collection("pedidos").doc(id);
@@ -2276,7 +2305,8 @@ function atualizarStatusIndividual(id, valor) {
             status: valor, 
             data: new Date().toISOString(),
             usuario: usuarioLogado ? usuarioLogado.usuario : "sistema",
-            nome: usuarioLogado ? usuarioLogado.nome : "Sistema"
+            nome: usuarioLogado ? usuarioLogado.nome : "Sistema",
+            justificativa: ((valor || "").toString().toLowerCase() === "pedido cancelado") ? justificativaCancelamento : undefined
           };
           
           historico.push(novaEntrada);
@@ -2301,7 +2331,12 @@ function atualizarStatusIndividual(id, valor) {
             material.status = valor;
           });
           
-          ref.update({ status: valor, historico: historico, materiais: materiais })
+          const updatePayload = { status: valor, historico: historico, materiais: materiais };
+          if ((valor || "").toString().toLowerCase() === "pedido cancelado") {
+            updatePayload.observacoes = `PEDIDO CANCELADO DEVIDO A: ${justificativaCancelamento}`;
+          }
+
+          ref.update(updatePayload)
             .then(() => {
               hideLoadingIndicator();
               showNotification(`Status do pedido atualizado para "${valor}"`, "success");
@@ -2311,7 +2346,8 @@ function atualizarStatusIndividual(id, valor) {
                 pedidoId: id,
                 numeroPedido: dados.numero,
                 statusAntigo: dados.status,
-                statusNovo: valor
+                statusNovo: valor,
+                justificativa: ((valor || "").toString().toLowerCase() === "pedido cancelado") ? justificativaCancelamento : undefined
               });
               
               // Reaplicar filtros para manter a filtragem ativa
@@ -2333,6 +2369,16 @@ function atualizarStatusItem(pedidoId, itemIndex, novoStatus) {
     "Confirmar alteração de status",
     `Deseja alterar o status do item para "${novoStatus}"?`,
     () => {
+      // Se for cancelamento, exigir justificativa
+      let justificativaCancelamentoItem = "";
+      if ((novoStatus || "").toString().toLowerCase() === "pedido cancelado") {
+        justificativaCancelamentoItem = (window.prompt && window.prompt("Informe a justificativa do cancelamento do item:")) || "";
+        if (!justificativaCancelamentoItem.trim()) {
+          showNotification && showNotification("Justificativa é obrigatória para cancelamento do item.", "warning");
+          return;
+        }
+      }
+
       showLoadingIndicator();
       
       const ref = db.collection("pedidos").doc(pedidoId);
@@ -2357,14 +2403,22 @@ function atualizarStatusItem(pedidoId, itemIndex, novoStatus) {
               status: novoStatus,
               data: new Date().toISOString(),
               usuario: usuarioLogado ? usuarioLogado.usuario : "sistema",
-              nome: usuarioLogado ? usuarioLogado.nome : "Sistema"
+              nome: usuarioLogado ? usuarioLogado.nome : "Sistema",
+              justificativa: ((novoStatus || "").toString().toLowerCase() === "pedido cancelado") ? justificativaCancelamentoItem : undefined
             });
             
             // Atualizar o status do item
             materiais[itemIndex].status = novoStatus;
             
             // Atualizar o documento no Firestore
-            ref.update({ materiais: materiais })
+            const payloadItem = { materiais: materiais };
+            if ((novoStatus || "").toString().toLowerCase() === "pedido cancelado") {
+              const atualObs = (dados.observacoes || "").toString().trim();
+              const texto = `PEDIDO CANCELADO DEVIDO A: ${justificativaCancelamentoItem}`;
+              payloadItem.observacoes = texto;
+            }
+
+            ref.update(payloadItem)
               .then(() => {
                 hideLoadingIndicator();
                 showNotification(`Status do item atualizado para "${novoStatus}"`, "success");
@@ -2375,7 +2429,8 @@ function atualizarStatusItem(pedidoId, itemIndex, novoStatus) {
                   numeroPedido: dados.numero,
                   material: materiais[itemIndex].material,
                   statusAntigo: materiais[itemIndex].status || dados.status,
-                  statusNovo: novoStatus
+                  statusNovo: novoStatus,
+                  justificativa: ((novoStatus || "").toString().toLowerCase() === "pedido cancelado") ? justificativaCancelamentoItem : undefined
                 });
                 
                 // Reaplicar filtros para manter a filtragem ativa
@@ -2391,6 +2446,196 @@ function atualizarStatusItem(pedidoId, itemIndex, novoStatus) {
       });
     }
   );
+}
+
+// Edição de observações do pedido
+function editarObservacaoPedido(pedidoId) {
+  const txt = document.getElementById(`obs-${pedidoId}`);
+  const input = document.getElementById(`obsInput-${pedidoId}`);
+  const btnEditar = document.getElementById(`btnObsEditar-${pedidoId}`);
+  const btnSalvar = document.getElementById(`btnObsSalvar-${pedidoId}`);
+  const btnCancelar = document.getElementById(`btnObsCancelar-${pedidoId}`);
+  if (!txt || !input) return;
+  input.style.display = '';
+  txt.style.display = 'none';
+  btnEditar && (btnEditar.style.display = 'none');
+  btnSalvar && (btnSalvar.style.display = '');
+  btnCancelar && (btnCancelar.style.display = '');
+  input.focus();
+}
+
+function cancelarEdicaoObservacao(pedidoId) {
+  const txt = document.getElementById(`obs-${pedidoId}`);
+  const input = document.getElementById(`obsInput-${pedidoId}`);
+  const btnEditar = document.getElementById(`btnObsEditar-${pedidoId}`);
+  const btnSalvar = document.getElementById(`btnObsSalvar-${pedidoId}`);
+  const btnCancelar = document.getElementById(`btnObsCancelar-${pedidoId}`);
+  if (!txt || !input) return;
+  input.value = txt.textContent === 'Nenhuma observação' ? '' : txt.textContent;
+  input.style.display = 'none';
+  txt.style.display = '';
+  btnEditar && (btnEditar.style.display = '');
+  btnSalvar && (btnSalvar.style.display = 'none');
+  btnCancelar && (btnCancelar.style.display = 'none');
+}
+
+async function salvarObservacaoPedido(pedidoId) {
+  try {
+    showLoadingIndicator && showLoadingIndicator();
+    const input = document.getElementById(`obsInput-${pedidoId}`);
+    if (!input) return;
+    const novaObs = (input.value || '').trim();
+
+    const ref = db.collection('pedidos').doc(pedidoId);
+    const docSnap = await ref.get();
+    if (!docSnap.exists) {
+      hideLoadingIndicator && hideLoadingIndicator();
+      showNotification && showNotification('Pedido não encontrado.', 'error');
+      return;
+    }
+
+    const dados = docSnap.data();
+    const historico = Array.isArray(dados.historico) ? dados.historico : [];
+    const usuarioLogado = JSON.parse(localStorage.getItem('usuarioLogado'));
+
+    historico.push({
+      acao: 'editar_observacoes',
+      campo: 'observacoes',
+      de: dados.observacoes || '',
+      para: novaObs,
+      data: new Date().toISOString(),
+      usuario: usuarioLogado ? (usuarioLogado.usuario || usuarioLogado.email || 'sistema') : 'sistema',
+      nome: usuarioLogado ? (usuarioLogado.nome || 'Sistema') : 'Sistema'
+    });
+
+    await ref.update({ observacoes: novaObs, historico: historico });
+
+    const txt = document.getElementById(`obs-${pedidoId}`);
+    if (txt) txt.textContent = novaObs || 'Nenhuma observação';
+    cancelarEdicaoObservacao(pedidoId);
+
+    hideLoadingIndicator && hideLoadingIndicator();
+    showNotification && showNotification('Observações atualizadas com sucesso!', 'success');
+  } catch (err) {
+    console.error(err);
+    hideLoadingIndicator && hideLoadingIndicator();
+    showNotification && showNotification('Erro ao salvar observações.', 'error');
+  }
+}
+
+// Impressão de pedido (itens "Disponível para Retirada")
+function imprimirPedido(pedidoId) {
+  try {
+    const pedido = (todosPedidos || []).find(p => p.id === pedidoId);
+    if (!pedido) {
+      showNotification && showNotification("Pedido não encontrado.", "error");
+      return;
+    }
+
+    const itens = (pedido.materiais || []).filter(m => {
+      const st = (m.status || pedido.status || "").toString().toLowerCase();
+      return st === "disponível para retirada";
+    });
+
+    // Montar HTML de impressão
+    const docTitle = `Pedido ${pedido.numero} - Disponível para Retirada`;
+    const dataFmt = pedido.data ? new Date(pedido.data).toLocaleString() : "";
+
+    const estiloImpressao = `
+      <style>
+        body { font-family: Arial, sans-serif; color: #000; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .logo-box { width: 48px; height: 48px; border-radius: 10px; background-color: #1e88e5; display: flex; align-items: center; justify-content: center; }
+        .logo-box i { color: #fff; font-size: 22px; }
+        .titulo { font-size: 18px; font-weight: bold; }
+        .sub { color: #444; }
+        .info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 12px 0 20px; }
+        .info-label { font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { border: 1px solid #000; padding: 8px; text-align: left; }
+        th { background: #f2f2f2; }
+        .assinatura { margin-top: 40px; }
+        .assinatura .linha { border-top: 1px solid #000; width: 320px; margin-top: 40px; }
+        .assinatura .label { margin-top: 6px; font-size: 12px; }
+        .rodape { margin-top: 24px; font-size: 12px; color: #333; }
+        @media print { .no-print { display: none !important; } }
+      </style>
+    `;
+
+    const linhas = itens.map((m, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${m.material || ""}</td>
+        <td>${m.quantidade || ""}</td>
+        <td>${m.status || pedido.status || ""}</td>
+      </tr>
+    `).join("");
+
+    const tabela = itens.length > 0 ? `
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Material</th>
+            <th>Quantidade</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${linhas}
+        </tbody>
+      </table>
+    ` : `
+      <p><em>Não há itens com status "Disponível para Retirada".</em></p>
+    `;
+
+    const w = window.open("", "_blank");
+    if (!w) { showNotification && showNotification("Bloqueio de pop-up impediu a impressão.", "error"); return; }
+    w.document.write(`
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${docTitle}</title>
+          <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
+          ${estiloImpressao}
+        </head>
+        <body>
+          <div class="header">
+            <div class="brand">
+              <div class="logo-box"><i class="fas fa-boxes"></i></div>
+              <div>
+                <div class="titulo">${docTitle}</div>
+                <div class="sub">Data do Pedido: ${dataFmt}</div>
+              </div>
+            </div>
+          </div>
+          <div class="info-grid">
+            <div><span class="info-label">Número:</span> ${pedido.numero || ""}</div>
+            <div><span class="info-label">Colaborador:</span> ${pedido.colaborador || ""}</div>
+            <div><span class="info-label">Focal:</span> ${pedido.Focal || pedido.focal || ""}</div>
+            <div><span class="info-label">Status do Pedido:</span> ${pedido.status || ""}</div>
+            <div style="grid-column: 1 / -1;"><span class="info-label">Observações:</span> ${pedido.observacoes || "Nenhuma observação"}</div>
+          </div>
+          ${tabela}
+          <div class="assinatura">
+            <div class="linha"></div>
+            <div class="label">Assinatura do Supervisor</div>
+          </div>
+          <div class="rodape">
+            Documento gerado automaticamente pelo sistema de Gestão de Materiais.
+          </div>
+          <script>
+            window.onload = function() { setTimeout(function(){ window.print(); window.close(); }, 200); };
+          <\/script>
+        </body>
+      </html>
+    `);
+    w.document.close();
+  } catch (e) {
+    console.error(e);
+    showNotification && showNotification("Erro ao preparar impressão.", "error");
+  }
 }
 
 // Filtros
